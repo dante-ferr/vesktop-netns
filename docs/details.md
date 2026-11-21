@@ -111,7 +111,7 @@ Without split mode, pick the nearest free VPN server and set the region override
 
 1. `ip netns add` creates an empty namespace.
 2. A WireGuard interface is created on the host, so its encrypted UDP packets can reach the server. The script then moves the interface into the namespace.
-3. The script assigns the address, sets the default route to the tunnel, and writes a private `resolv.conf` for DNS. Only processes in the namespace see it.
+3. The script assigns the address, sets the default route to the tunnel, and writes a private `resolv.conf` for DNS. Only processes in the namespace see it. An `nft` rule in the namespace also redirects every DNS query to the tunnel's DNS server. This keeps DNS working when the host rewrites its own `/etc/resolv.conf`, for example after suspend.
 4. The script waits for the WireGuard handshake and stops if it does not complete.
 5. `setpriv` drops root and starts Vesktop as your user. The script forwards the display, D-Bus, and audio environment variables (Wayland, X11, PipeWire, PulseAudio).
 6. On exit, `Ctrl-C`, or an error, the script kills leftover processes and deletes the namespace, interfaces, NAT rules, and DNS files.

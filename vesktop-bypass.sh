@@ -311,8 +311,54 @@ setup_namespace() {
   chmod 644 -- "$RESOLV_DIR/resolv.conf"
 
   wait_for_handshake "${dns[0]}"
+  setup_dns_redirect "${dns[@]}"
   ((SPLIT_VOICE)) && setup_split_voice
   log "Tunnel ready (DNS: ${dns[*]})."
+}
+
+# Force every DNS query made inside the namespace to the tunnel's DNS server.
+#
+# The bind-mounted /etc/resolv.conf is not enough. When the host rewrites its
+# own /etc/resolv.conf (NetworkManager does this after suspend or a link
+# change), the kernel detaches the bind mount in every mount namespace. The app
+# then reads the host's ISP resolvers, and the VPN drops those queries, so
+# nothing loads. Rewriting the destination in the namespace makes DNS work
+# whatever resolv.conf says, and keeps queries inside the tunnel.
+setup_dns_redirect() {
+  local server v4="" v6=""
+  for server in "$@"; do
+    if [[ "$server" == *:* ]]; then
+      [[ -n "$v6" ]] || v6="$server"
+    else
+      [[ -n "$v4" ]] || v4="$server"
+    fi
+  done
+  if ! command -v nft >/dev/null 2>&1; then
+    warn "nft not found: DNS may fail after suspend. Install nftables."
+    return 0
+  fi
+  if [[ -n "$v4" ]]; then
+    ip netns exec "$NS_NAME" nft -f - <<EOF || warn "Could not set up the IPv4 DNS redirect."
+table ip vesktop_dns {
+  chain output {
+    type nat hook output priority -100; policy accept;
+    ip daddr != 127.0.0.0/8 udp dport 53 dnat to $v4
+    ip daddr != 127.0.0.0/8 tcp dport 53 dnat to $v4
+  }
+}
+EOF
+  fi
+  if [[ -n "$v6" ]]; then
+    ip netns exec "$NS_NAME" nft -f - <<EOF || warn "Could not set up the IPv6 DNS redirect."
+table ip6 vesktop_dns {
+  chain output {
+    type nat hook output priority -100; policy accept;
+    ip6 daddr != ::1 udp dport 53 dnat to $v6
+    ip6 daddr != ::1 tcp dport 53 dnat to $v6
+  }
+}
+EOF
+  fi
 }
 
 # Optional: let voice/video UDP bypass the tunnel for lower latency.
