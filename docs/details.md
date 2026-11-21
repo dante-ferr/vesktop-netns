@@ -37,7 +37,7 @@ Never commit a real config. `.gitignore` blocks every `*.conf` file except `wg.c
 
 ## Install dependencies manually
 
-`make deps` covers these packages. To install them yourself, you need `iproute2`, `wireguard-tools`, `sudo`, `util-linux` (`setpriv`), `curl` (for `--test`), and `nftables` plus `procps` (for `--split-voice`).
+`make deps` covers these packages. To install them yourself, you need `iproute2`, `wireguard-tools`, `sudo`, `util-linux` (`setpriv`), `curl` (for `--test`), `zenity` or `kdialog` (launcher password dialog), and `nftables` plus `procps` (for `--split-voice`).
 
 | Distro | Command |
 | --- | --- |
@@ -130,7 +130,7 @@ In split mode, a veth pair links the namespace to the host. Inside the namespace
 | Connection stalls on large transfers | Add `MTU = 1280` to `[Interface]` in your config. |
 | Leftover namespaces after a crash | Run `./vesktop-bypass.sh --cleanup`. |
 | No window or audio | Run from your graphical session as your normal user, not from SSH or another login. |
-| Launcher entry does nothing | The entry opens a terminal for the `sudo` prompt. Check that a terminal emulator is installed. |
+| Launcher entry does nothing | Check `~/.local/state/vesktop-netns/last.log`. The entry needs `zenity` or `kdialog` for the password dialog. |
 | Flatpak Vesktop fails to start | Check `flatpak run dev.vencord.Vesktop` outside the script, or set `VESKTOP_CMD` to a native install. |
 | `make install` says no config found | Run `make install CONF=path/to/your-file.conf`. |
 

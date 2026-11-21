@@ -30,8 +30,8 @@ test:
 	./vesktop-bypass.sh --test $(ARGS)
 
 # Saves the WireGuard config, installs the script to ~/.local/bin, and adds a
-# desktop entry to the user's application menu. The entry opens a terminal
-# because sudo needs a password.
+# desktop entry to the user's application menu. The entry shows a graphical
+# password prompt (zenity or kdialog) and logs to ~/.local/state/vesktop-netns/last.log.
 install:
 	@if [ -n "$(CONF)" ]; then \
 	  [ -f "$(CONF)" ] || { echo "Config not found: $(CONF)" >&2; exit 1; }; \
@@ -56,7 +56,7 @@ install:
 	  'Comment=Vesktop routed through a WireGuard tunnel' \
 	  'Exec=$(BIN_DIR)/$(BIN_NAME)' \
 	  'Icon=vesktop' \
-	  'Terminal=true' \
+	  'Terminal=false' \
 	  'Categories=Network;InstantMessaging;Chat;' \
 	  'Keywords=Discord;Vesktop;VPN;WireGuard;' \
 	  > "$(DESKTOP)"
@@ -78,23 +78,23 @@ deps:
 	if [ "$$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi; \
 	if command -v pacman >/dev/null 2>&1; then \
 	  echo "Detected pacman (Arch-based)"; \
-	  $$SUDO pacman -S --needed wireguard-tools iproute2 sudo util-linux curl nftables procps-ng; \
+	  $$SUDO pacman -S --needed wireguard-tools iproute2 sudo util-linux curl zenity nftables procps-ng; \
 	elif command -v apt-get >/dev/null 2>&1; then \
 	  echo "Detected apt (Debian/Ubuntu-based)"; \
 	  $$SUDO apt-get update; \
-	  $$SUDO apt-get install -y wireguard-tools iproute2 sudo util-linux curl nftables procps; \
+	  $$SUDO apt-get install -y wireguard-tools iproute2 sudo util-linux curl zenity nftables procps; \
 	elif command -v dnf >/dev/null 2>&1; then \
 	  echo "Detected dnf (Fedora/RHEL-based)"; \
-	  $$SUDO dnf install -y wireguard-tools iproute sudo util-linux curl nftables procps-ng; \
+	  $$SUDO dnf install -y wireguard-tools iproute sudo util-linux curl zenity nftables procps-ng; \
 	elif command -v zypper >/dev/null 2>&1; then \
 	  echo "Detected zypper (openSUSE)"; \
-	  $$SUDO zypper --non-interactive install wireguard-tools iproute2 sudo util-linux curl nftables procps; \
+	  $$SUDO zypper --non-interactive install wireguard-tools iproute2 sudo util-linux curl zenity nftables procps; \
 	elif command -v apk >/dev/null 2>&1; then \
 	  echo "Detected apk (Alpine)"; \
-	  $$SUDO apk add wireguard-tools iproute2 sudo util-linux curl nftables procps; \
+	  $$SUDO apk add wireguard-tools iproute2 sudo util-linux curl zenity nftables procps; \
 	elif command -v xbps-install >/dev/null 2>&1; then \
 	  echo "Detected xbps (Void)"; \
-	  $$SUDO xbps-install -S wireguard-tools iproute2 sudo util-linux curl nftables procps-ng; \
+	  $$SUDO xbps-install -S wireguard-tools iproute2 sudo util-linux curl zenity nftables procps-ng; \
 	else \
 	  echo "No supported package manager found. Install manually (see README)." >&2; \
 	  exit 1; \

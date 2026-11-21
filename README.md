@@ -22,7 +22,7 @@ Run [Vesktop](https://github.com/Vencord/Vesktop) through a WireGuard VPN. Only 
 
 ## Use
 
-Open **Vesktop Netns** from your app launcher, or run:
+Open **Vesktop Netns** from your app launcher. A dialog asks for your password, and no terminal opens. Output goes to `~/.local/state/vesktop-netns/last.log`. Or run in a terminal:
 
 ```sh
 make run

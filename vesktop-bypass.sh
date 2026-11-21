@@ -31,6 +31,12 @@ NS_NAME="${NS_PREFIX}$$"
 WG_IF="wgvb$$"
 WORK_DIR=""
 NS_CREATED=0
+# GUI_MODE=1 when started without a terminal (for example from the app
+# launcher): passwords come from a graphical prompt and output goes to a log.
+GUI_MODE=0
+SUDO=(sudo)
+ASKPASS_FILE=""
+LOG_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/vesktop-netns/last.log"
 WG_CREATED=0
 RESOLV_DIR=""
 
@@ -48,7 +54,14 @@ DIRECT_UDP_PORTS="${VESKTOP_DIRECT_UDP_PORTS:-3478-3481,50000-65535}"
 
 log()  { printf '[%s] %s\n' "$PROG" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$PROG" "$*" >&2; }
-die()  { printf '[%s] ERROR: %s\n' "$PROG" "$*" >&2; exit 1; }
+die() {
+  printf '[%s] ERROR: %s\n' "$PROG" "$*" >&2
+  # Without a terminal (app launcher), also show a desktop notification.
+  if ((GUI_MODE)) && command -v notify-send >/dev/null 2>&1; then
+    notify-send -u critical "Vesktop Netns" "$*" 2>/dev/null || true
+  fi
+  exit 1
+}
 
 usage() {
   cat <<EOF
@@ -93,7 +106,7 @@ EOF
 # ---------------------------------------------------------------------------
 
 # Run a command as root. Only network setup uses root; Vesktop never does.
-priv() { sudo -- "$@"; }
+priv() { "${SUDO[@]}" -- "$@"; }
 
 require_commands() {
   local missing=() cmd
@@ -132,6 +145,7 @@ cleanup() {
   ((NFT_CREATED)) && priv nft delete table ip "$NFT_TABLE" 2>/dev/null
   [[ -n "$RESOLV_DIR" ]] && priv rm -rf -- "$RESOLV_DIR" 2>/dev/null
   [[ -n "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
+  [[ -n "$ASKPASS_FILE" ]] && rm -f -- "$ASKPASS_FILE"
 
   ((NS_CREATED)) && log "Cleaned up namespace $NS_NAME."
   exit "$rc"
@@ -427,6 +441,35 @@ detect_vesktop_cmd() {
 # Main
 # ---------------------------------------------------------------------------
 
+# Without a terminal, sudo cannot prompt. Use a graphical password dialog
+# through SUDO_ASKPASS and write output to a log file.
+setup_gui_mode() {
+  [[ -t 0 || -t 1 || -t 2 ]] && return 0
+  GUI_MODE=1
+  mkdir -p -- "$(dirname -- "$LOG_FILE")"
+  exec >"$LOG_FILE" 2>&1
+
+  if [[ -z "${SUDO_ASKPASS:-}" ]]; then
+    local body=""
+    if command -v zenity >/dev/null 2>&1; then
+      body='exec zenity --password --title="Vesktop Netns: administrator password"'
+    elif command -v kdialog >/dev/null 2>&1; then
+      body='exec kdialog --password "Vesktop Netns needs your password to set up the network."'
+    else
+      local helper
+      for helper in ksshaskpass lxqt-openssh-askpass ssh-askpass /usr/lib/ssh/x11-ssh-askpass; do
+        if command -v "$helper" >/dev/null 2>&1; then body="exec $helper \"\$@\""; break; fi
+      done
+    fi
+    [[ -n "$body" ]] || die "No graphical password prompt found. Install zenity or kdialog, or run from a terminal."
+    ASKPASS_FILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/vesktop-askpass.XXXXXX")"
+    printf '#!/bin/sh\n%s\n' "$body" >"$ASKPASS_FILE"
+    chmod 700 "$ASKPASS_FILE"
+    export SUDO_ASKPASS="$ASKPASS_FILE"
+  fi
+  SUDO=(sudo -A)
+}
+
 main() {
   local conf_arg="" test_only=0
   local -a vesktop_args=()
@@ -436,7 +479,7 @@ main() {
       -h|--help)    usage; exit 0 ;;
       -t|--test)    test_only=1 ;;
       -s|--split-voice) SPLIT_VOICE=1 ;;
-      -c|--cleanup) require_commands; sudo -v; cleanup_leftovers; exit 0 ;;
+      -c|--cleanup) require_commands; "${SUDO[@]}" -v; cleanup_leftovers; exit 0 ;;
       --)           shift; vesktop_args=("$@"); break ;;
       -*)           die "Unknown option: $1 (try --help)" ;;
       *)            [[ -z "$conf_arg" ]] || die "Only one config file is accepted."
@@ -445,6 +488,7 @@ main() {
     shift
   done
 
+  setup_gui_mode
   ((EUID != 0)) || die "Run as your normal user, not root. The script uses sudo only for network setup."
   [[ "$(uname -s)" == "Linux" ]] || die "Linux only."
   require_commands
@@ -468,9 +512,8 @@ main() {
   fi
 
   log "Requesting administrator access for network setup..."
-  sudo -v
-
   trap cleanup EXIT INT TERM HUP ERR
+  "${SUDO[@]}" -v
   setup_namespace "$conf"
 
   if ((test_only)); then
