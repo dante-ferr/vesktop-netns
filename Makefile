@@ -3,6 +3,7 @@ BIN_DIR     := $(PREFIX)/bin
 APP_DIR     := $(HOME)/.local/share/applications
 BIN_NAME    := vesktop-bypass
 DESKTOP     := $(APP_DIR)/vesktop-netns.desktop
+DESKTOP_SPLIT := $(APP_DIR)/vesktop-netns-split.desktop
 CONF_DIR    := $(HOME)/.config/vesktop-netns
 CONF_FILE   := $(CONF_DIR)/wg.conf
 # Path to your WireGuard config, used by "make install": make install CONF=~/Downloads/x.conf
@@ -17,8 +18,8 @@ help:
 	@echo "make run         Run Vesktop through the tunnel (ARGS=... for options)"
 	@echo "make split       Run Vesktop with direct voice/video UDP (--split-voice)"
 	@echo "make test        Print the public IP seen through the tunnel"
-	@echo "make install     Save your WireGuard config and add the launcher entry (CONF=path/to/file.conf)"
-	@echo "make uninstall   Remove the launcher entry and installed script"
+	@echo "make install     Save your WireGuard config and add the launcher entries (CONF=path/to/file.conf)"
+	@echo "make uninstall   Remove the launcher entries and installed script"
 
 run:
 	./vesktop-bypass.sh $(ARGS)
@@ -60,13 +61,24 @@ install:
 	  'Categories=Network;InstantMessaging;Chat;' \
 	  'Keywords=Discord;Vesktop;VPN;WireGuard;' \
 	  > "$(DESKTOP)"
-	@chmod 644 "$(DESKTOP)"
+	@printf '%s\n' \
+	  '[Desktop Entry]' \
+	  'Type=Application' \
+	  'Name=Vesktop Netns (split voice)' \
+	  'Comment=Vesktop through a WireGuard tunnel, with voice and video sent directly' \
+	  'Exec=$(BIN_DIR)/$(BIN_NAME) --split-voice' \
+	  'Icon=vesktop' \
+	  'Terminal=false' \
+	  'Categories=Network;InstantMessaging;Chat;' \
+	  'Keywords=Discord;Vesktop;VPN;WireGuard;' \
+	  > "$(DESKTOP_SPLIT)"
+	@chmod 644 "$(DESKTOP)" "$(DESKTOP_SPLIT)"
 	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APP_DIR)" || true
-	@echo "Installed. Search for 'Vesktop Netns' in your app launcher."
+	@echo "Installed. Search for 'Vesktop Netns' in your app launcher (also 'Vesktop Netns (split voice)')."
 
 # Keeps your saved config. Delete $(CONF_DIR) yourself to remove it.
 uninstall:
-	rm -f "$(BIN_DIR)/$(BIN_NAME)" "$(DESKTOP)"
+	rm -f "$(BIN_DIR)/$(BIN_NAME)" "$(DESKTOP)" "$(DESKTOP_SPLIT)"
 	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APP_DIR)" || true
 	@echo "Removed."
 

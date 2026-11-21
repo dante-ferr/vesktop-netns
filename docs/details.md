@@ -88,7 +88,7 @@ With make, use `ARGS`: `make run ARGS="--split-voice"`.
 
 ## Lower call latency with `--split-voice`
 
-By default, voice goes through the VPN, which adds the round-trip time to the VPN server. With `--split-voice` (or `make split`), the script sends only voice and video UDP traffic over your normal connection. Login, chat, DNS, and all TCP traffic still use the tunnel.
+By default, voice goes through the VPN, which adds the round-trip time to the VPN server. With `--split-voice` (or `make split`, or the **Vesktop Netns (split voice)** launcher entry that `make install` adds), the script sends only voice and video UDP traffic over your normal connection. Login, chat, DNS, and all TCP traffic still use the tunnel.
 
 Trade-offs:
 

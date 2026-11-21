@@ -16,13 +16,13 @@ Run [Vesktop](https://github.com/Vencord/Vesktop) through a WireGuard VPN. Only 
    ```
 
    - `make deps` installs the required packages for your distro.
-   - `make install` saves your config to `~/.config/vesktop-netns/wg.conf` (mode `600`), installs the script to `~/.local/bin`, and adds **Vesktop Netns** to your app launcher.
+   - `make install` saves your config to `~/.config/vesktop-netns/wg.conf` (mode `600`), installs the script to `~/.local/bin`, and adds two entries to your app launcher: **Vesktop Netns** and **Vesktop Netns (split voice)**.
 
 4. Reboot if you recently updated your kernel. WireGuard needs the kernel's modules to match the running kernel.
 
 ## Use
 
-Open **Vesktop Netns** from your app launcher. A dialog asks for your password, and no terminal opens. Output goes to `~/.local/state/vesktop-netns/last.log`. Or run in a terminal:
+Open **Vesktop Netns** from your app launcher. For lower call latency, open **Vesktop Netns (split voice)** instead (see [split voice](docs/details.md#lower-call-latency-with---split-voice) for the privacy trade-off). A dialog asks for your password, and no terminal opens. Output goes to `~/.local/state/vesktop-netns/last.log`. Or run in a terminal:
 
 ```sh
 make run
@@ -41,7 +41,7 @@ To check the tunnel first, run `make test`. It prints the public IP address the 
 | `make run` | Run Vesktop through the tunnel. |
 | `make split` | Run with direct voice and video traffic (lower call latency). |
 | `make test` | Print the public IP seen through the tunnel. |
-| `make uninstall` | Remove the script and launcher entry. Your saved config stays. |
+| `make uninstall` | Remove the script and launcher entries. Your saved config stays. |
 
 You can also run `./vesktop-bypass.sh --help` directly.
 
@@ -56,6 +56,8 @@ You can also run `./vesktop-bypass.sh --help` directly.
 | Leftover namespaces after a crash | Run `./vesktop-bypass.sh --cleanup`. |
 
 More solutions: [docs/details.md](docs/details.md#troubleshooting).
+
+In Brazil? Read the [guide for users in Brazil](docs/brazil.md) for server choice and lower latency.
 
 ## Documentation
 
