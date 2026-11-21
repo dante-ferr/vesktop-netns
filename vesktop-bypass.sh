@@ -227,6 +227,13 @@ setup_namespace() {
   WORK_DIR="$(mktemp -d)"
   ln -s "$(realpath -- "$conf")" "$WORK_DIR/wgvb.conf"
 
+  # Load the kernel module if needed and fail early with a clear message.
+  priv modprobe wireguard 2>/dev/null || true
+  if ! priv ip link add "wgchk$$" type wireguard 2>/dev/null; then
+    die "The kernel cannot create WireGuard interfaces. If you updated the kernel, reboot. Otherwise install a WireGuard-capable kernel (5.6+)."
+  fi
+  priv ip link del "wgchk$$" 2>/dev/null || true
+
   log "Creating namespace $NS_NAME"
   priv ip netns add "$NS_NAME"
   NS_CREATED=1
