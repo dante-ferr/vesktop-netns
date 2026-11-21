@@ -1,0 +1,26 @@
+# Example WireGuard configuration for vesktop-bypass.sh.
+#
+# Do not put real keys in this file. Copy it, then edit the copy:
+#   mkdir -p ~/.config/vesktop-netns
+#   cp wg.conf.example ~/.config/vesktop-netns/wg.conf
+#   chmod 600 ~/.config/vesktop-netns/wg.conf
+#
+# In practice, you download a complete file from your VPN provider
+# (see README) and only need this template to see the expected format.
+
+[Interface]
+# Your private key from the provider. Keep it secret.
+PrivateKey = <YOUR_PRIVATE_KEY>
+# The address the provider assigned to you (IPv6 is optional).
+Address = 10.2.0.2/32
+# DNS server used inside the namespace. Queries go through the tunnel.
+DNS = 10.2.0.1
+
+[Peer]
+# The provider's server public key.
+PublicKey = <SERVER_PUBLIC_KEY>
+# Route everything through the tunnel.
+AllowedIPs = 0.0.0.0/0, ::/0
+# Server address and port.
+Endpoint = 203.0.113.10:51820
+PersistentKeepalive = 25

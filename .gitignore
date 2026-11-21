@@ -1,0 +1,15 @@
+# Never commit real WireGuard configs: they contain private keys.
+*.conf
+*.conf.*
+!wg.conf.example
+
+# Private keys and common credential files
+*.key
+*.pem
+wgcf-account.toml
+wgcf-profile.conf
+
+# Editor and OS files
+*~
+*.swp
+.DS_Store
