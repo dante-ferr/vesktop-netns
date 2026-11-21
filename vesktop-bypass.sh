@@ -265,7 +265,21 @@ setup_namespace() {
   priv mkdir -p -- "$RESOLV_DIR"
   printf 'nameserver %s\n' "${dns[@]}" | priv tee "$RESOLV_DIR/resolv.conf" >/dev/null
 
+  wait_for_handshake "${dns[0]}"
   log "Tunnel ready (DNS: ${dns[*]})."
+}
+
+# WireGuard only handshakes when traffic is sent. Send one UDP packet to the
+# DNS server, then wait up to 10 seconds for the handshake to complete.
+wait_for_handshake() {
+  local probe_target="$1" i hs
+  priv ip netns exec "$NS_NAME" bash -c "echo > /dev/udp/${probe_target}/53" 2>/dev/null || true
+  for ((i = 0; i < 20; i++)); do
+    hs="$(priv ip netns exec "$NS_NAME" wg show "$WG_IF" latest-handshakes | awk '{print $2}' | head -n1)"
+    [[ -n "$hs" && "$hs" != "0" ]] && return 0
+    sleep 0.5
+  done
+  die "No WireGuard handshake with the server after 10 seconds. Check that the config is valid and not expired, that your network allows outgoing UDP, or try another server."
 }
 
 # ---------------------------------------------------------------------------
