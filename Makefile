@@ -3,6 +3,10 @@ BIN_DIR     := $(PREFIX)/bin
 APP_DIR     := $(HOME)/.local/share/applications
 BIN_NAME    := vesktop-bypass
 DESKTOP     := $(APP_DIR)/vesktop-netns.desktop
+CONF_DIR    := $(HOME)/.config/vesktop-netns
+CONF_FILE   := $(CONF_DIR)/wg.conf
+# Path to your WireGuard config, used by "make install": make install CONF=~/Downloads/x.conf
+CONF        ?=
 # Extra arguments for run/test, for example: make run ARGS="--split-voice"
 ARGS        ?=
 
@@ -13,7 +17,7 @@ help:
 	@echo "make run         Run Vesktop through the tunnel (ARGS=... for options)"
 	@echo "make split       Run Vesktop with direct voice/video UDP (--split-voice)"
 	@echo "make test        Print the public IP seen through the tunnel"
-	@echo "make install     Add 'Vesktop Netns' to the application launcher"
+	@echo "make install     Save your WireGuard config and add the launcher entry (CONF=path/to/file.conf)"
 	@echo "make uninstall   Remove the launcher entry and installed script"
 
 run:
@@ -25,9 +29,24 @@ split:
 test:
 	./vesktop-bypass.sh --test $(ARGS)
 
-# Installs the script to ~/.local/bin and a desktop entry to the user's
-# application menu. The entry opens a terminal because sudo needs a password.
+# Saves the WireGuard config, installs the script to ~/.local/bin, and adds a
+# desktop entry to the user's application menu. The entry opens a terminal
+# because sudo needs a password.
 install:
+	@if [ -n "$(CONF)" ]; then \
+	  [ -f "$(CONF)" ] || { echo "Config not found: $(CONF)" >&2; exit 1; }; \
+	  install -d -m 700 "$(CONF_DIR)"; \
+	  install -m 600 "$(CONF)" "$(CONF_FILE)"; \
+	  echo "Saved config to $(CONF_FILE)"; \
+	elif [ -f "$(CONF_FILE)" ]; then \
+	  chmod 600 "$(CONF_FILE)"; \
+	  echo "Using existing config $(CONF_FILE)"; \
+	else \
+	  echo "No WireGuard config found." >&2; \
+	  echo "Run: make install CONF=path/to/your-file.conf" >&2; \
+	  echo "See docs/details.md for how to get a free file." >&2; \
+	  exit 1; \
+	fi
 	install -d -m 755 "$(BIN_DIR)" "$(APP_DIR)"
 	install -m 755 vesktop-bypass.sh "$(BIN_DIR)/$(BIN_NAME)"
 	@printf '%s\n' \
@@ -44,8 +63,8 @@ install:
 	@chmod 644 "$(DESKTOP)"
 	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APP_DIR)" || true
 	@echo "Installed. Search for 'Vesktop Netns' in your app launcher."
-	@echo "Config is read from ~/.config/vesktop-netns/wg.conf (see README)."
 
+# Keeps your saved config. Delete $(CONF_DIR) yourself to remove it.
 uninstall:
 	rm -f "$(BIN_DIR)/$(BIN_NAME)" "$(DESKTOP)"
 	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APP_DIR)" || true
