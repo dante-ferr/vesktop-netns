@@ -20,7 +20,13 @@ Enter your password when `sudo` asks. Vesktop opens. Close Vesktop to remove the
 
 ## 1. Install dependencies
 
-You need: `iproute2` (`ip`), `wireguard-tools` (`wg`, `wg-quick`), `sudo`, `util-linux` (`setpriv`), `curl` (only for `--test`), and Vesktop.
+Run this command to install everything except Vesktop automatically:
+
+```sh
+make deps
+```
+
+It supports `pacman`, `apt`, `dnf`, `zypper`, `apk`, and `xbps`. To install manually instead, you need: `iproute2` (`ip`), `wireguard-tools` (`wg`, `wg-quick`), `sudo`, `util-linux` (`setpriv`), `curl` (only for `--test`), and Vesktop.
 
 | Distro | Command |
 | --- | --- |

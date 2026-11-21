@@ -85,7 +85,7 @@ require_commands() {
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if ((${#missing[@]})); then
-    die "Missing required commands: ${missing[*]}. See the README for install steps."
+    die "Missing required commands: ${missing[*]}. Run 'make deps' in the repository, or see the README."
   fi
 }
 
