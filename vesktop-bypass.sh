@@ -331,7 +331,7 @@ main() {
     case "$1" in
       -h|--help)    usage; exit 0 ;;
       -t|--test)    test_only=1 ;;
-      -c|--cleanup) require_commands; priv -v; cleanup_leftovers; exit 0 ;;
+      -c|--cleanup) require_commands; sudo -v; cleanup_leftovers; exit 0 ;;
       --)           shift; vesktop_args=("$@"); break ;;
       -*)           die "Unknown option: $1 (try --help)" ;;
       *)            [[ -z "$conf_arg" ]] || die "Only one config file is accepted."
@@ -363,7 +363,7 @@ main() {
   fi
 
   log "Requesting administrator access for network setup..."
-  priv -v
+  sudo -v
 
   trap cleanup EXIT INT TERM HUP ERR
   setup_namespace "$conf"
