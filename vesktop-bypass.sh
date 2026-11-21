@@ -262,8 +262,11 @@ setup_namespace() {
   # "ip netns exec" bind-mounts /etc/netns/<name>/resolv.conf over
   # /etc/resolv.conf for processes inside the namespace only.
   RESOLV_DIR="/etc/netns/$NS_NAME"
-  priv mkdir -p -- "$RESOLV_DIR"
+  # The script's umask is 077, but the unprivileged user must be able to read
+  # these files, so set the modes explicitly.
+  priv install -d -m 755 -- "$RESOLV_DIR"
   printf 'nameserver %s\n' "${dns[@]}" | priv tee "$RESOLV_DIR/resolv.conf" >/dev/null
+  priv chmod 644 -- "$RESOLV_DIR/resolv.conf"
 
   wait_for_handshake "${dns[0]}"
   log "Tunnel ready (DNS: ${dns[*]})."
