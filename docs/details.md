@@ -75,7 +75,7 @@ vesktop-bypass.sh [options] [WG_CONF] [-- VESKTOP_ARGS...]
 
   -t, --test         Print the tunnel's public IP and exit.
   -s, --split-voice  Send voice/video UDP directly (lower call latency).
-  -c, --cleanup      Remove leftover namespaces after a crash.
+  -c, --cleanup      Remove all namespaces and firewall tables from this script, including active runs.
   -h, --help         Show help.
 ```
 
@@ -102,10 +102,23 @@ Trade-offs:
 
 - Discord voice servers see your real IP address.
 - The script adds a temporary `nft` NAT rule on the host, limited to the namespace's veth interface. It removes the rule on exit.
-- Firewalls that block forwarding (for example Docker's default `FORWARD` policy) can stop voice from connecting.
+- Firewalls that drop forwarded packets (for example Docker's default `FORWARD` policy) stop voice from connecting. The script checks this at start and prints a warning. See [Firewall drops split voice](#firewall-drops-split-voice).
 - Discord picks the voice region from the IP it sees on login. Set the channel's **Region Override** to a server near you.
 
 Without split mode, pick the nearest free VPN server and set the region override to match it.
+
+### Firewall drops split voice
+
+Docker and some firewall tools set the host `FORWARD` chain to `policy drop`. A rule in another chain cannot override that drop, so the script cannot fix this without editing your firewall, which it never does. Add the rules yourself once.
+
+For Docker, which provides the `DOCKER-USER` chain for custom rules:
+
+```bash
+sudo nft insert rule ip filter DOCKER-USER iifname "vbh*" accept
+sudo nft insert rule ip filter DOCKER-USER oifname "vbh*" ct state established,related accept
+```
+
+These rules match only the script's `vbh*` veth interfaces. Add them to your firewall's persistent configuration to keep them after a reboot. For other firewalls, allow forwarding from `vbh*` to your internet interface and return traffic for established connections.
 
 ## How it works
 
@@ -114,7 +127,7 @@ Without split mode, pick the nearest free VPN server and set the region override
 3. The script assigns the address, sets the default route to the tunnel, and writes a private `resolv.conf` for DNS. Only processes in the namespace see it. An `nft` rule in the namespace also redirects every DNS query to the tunnel's DNS server. This keeps DNS working when the host rewrites its own `/etc/resolv.conf`, for example after suspend.
 4. The script waits for the WireGuard handshake and stops if it does not complete.
 5. `setpriv` drops root and starts Vesktop as your user. The script forwards the display, D-Bus, and audio environment variables (Wayland, X11, PipeWire, PulseAudio).
-6. On exit, `Ctrl-C`, or an error, the script kills leftover processes and deletes the namespace, interfaces, NAT rules, and DNS files.
+6. On exit, `Ctrl-C`, or an error, the script kills leftover processes and deletes the namespace, interfaces, NAT rules, and DNS files. If a run is killed with `SIGKILL`, the next run removes its leftovers automatically. Runs that are still active stay untouched.
 
 In split mode, a veth pair links the namespace to the host. Inside the namespace, `nft` marks UDP packets for the direct ports, and a policy routing rule sends marked packets over the veth. The host masquerades them.
 
@@ -138,7 +151,7 @@ In split mode, a veth pair links the namespace to the host. Inside the namespace
 | No WireGuard handshake | The config is expired or revoked, or your network blocks outgoing UDP. Download a config for another server. |
 | Name resolution fails | Set `VESKTOP_DNS=1.1.1.1`. |
 | Connection stalls on large transfers | Add `MTU = 1280` to `[Interface]` in your config. |
-| Leftover namespaces after a crash | Run `./vesktop-bypass.sh --cleanup`. |
+| Leftover namespaces after a crash | The next run removes them. To remove them now, run `./vesktop-bypass.sh --cleanup`. It also stops any active run. |
 | No window or audio | Run from your graphical session as your normal user, not from SSH or another login. |
 | `Wrong password` even though the password is correct | Many distributions, including Arch, lock `sudo` with `pam_faillock` after 3 failed attempts in 15 minutes. While locked, the correct password also fails with `Sorry, try again`. Run `faillock --user "$USER"` to see recent failures. Wait 10 minutes, or reset the counter with `sudo faillock --user "$USER" --reset` from a terminal (or as root if `sudo` is locked). |
 | `No password entered` | You cancelled the dialog, or it could not open. Check that `zenity` or `kdialog` opens from your desktop session: `zenity --password`. |

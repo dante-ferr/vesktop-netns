@@ -155,21 +155,43 @@ cleanup() {
   exit "$rc"
 }
 
-# Remove namespaces left behind by runs that were killed with SIGKILL.
+# Remove one namespace and the host-side leftovers of the run that owned it.
+remove_run_resources() {
+  local ns="$1" pid="${1#"$NS_PREFIX"}" pids
+  pids="$(ip netns pids "$ns" 2>/dev/null || true)"
+  # shellcheck disable=SC2086
+  [[ -n "$pids" ]] && kill $pids 2>/dev/null || true
+  ip netns del "$ns" 2>/dev/null || true
+  # Deleting the namespace also removes the veth pair and the WireGuard device.
+  nft delete table ip "vesktop_netns_$pid" 2>/dev/null || true
+  rm -rf -- "/etc/netns/$ns" || true
+}
+
+# Remove leftovers of runs that were killed with SIGKILL (or lost power).
+# With "all" set, remove every namespace, even ones that are still in use.
+# Without it, remove only namespaces whose owning script is no longer running,
+# so parallel runs stay untouched. Returns after logging what it removed.
 cleanup_leftovers() {
-  local ns found=0
+  local all="${1:-}" ns found=0 pid
   while read -r ns _; do
-    [[ "$ns" == "$NS_PREFIX"* ]] || continue
+    [[ "$ns" =~ ^${NS_PREFIX}[0-9]+$ ]] || continue
+    pid="${ns#"$NS_PREFIX"}"
+    [[ "$all" == "all" ]] || ! kill -0 "$pid" 2>/dev/null || continue
     found=1
     log "Removing leftover namespace $ns"
-    local pids
-    pids="$(ip netns pids "$ns" 2>/dev/null || true)"
-    # shellcheck disable=SC2086
-    [[ -n "$pids" ]] && kill $pids 2>/dev/null || true
-    ip netns del "$ns" || true
-    rm -rf -- "/etc/netns/$ns" || true
+    remove_run_resources "$ns"
   done < <(ip netns list 2>/dev/null)
-  ((found)) || log "No leftover namespaces found."
+  # Host NAT tables whose namespace is already gone.
+  while read -r _ _ ns; do
+    [[ "$ns" =~ ^vesktop_netns_[0-9]+$ ]] || continue
+    pid="${ns#vesktop_netns_}"
+    [[ "$all" == "all" ]] || ! kill -0 "$pid" 2>/dev/null || continue
+    found=1
+    log "Removing leftover firewall table $ns"
+    nft delete table ip "$ns" 2>/dev/null || true
+  done < <(nft list tables 2>/dev/null)
+  ((found)) || [[ "$all" != "all" ]] || log "No leftovers found."
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -273,6 +295,7 @@ setup_namespace() {
   fi
   ip link del "wgchk$$" 2>/dev/null || true
 
+  cleanup_leftovers
   log "Creating namespace $NS_NAME"
   ip netns add "$NS_NAME"
   NS_CREATED=1
@@ -410,13 +433,42 @@ EOF
   # Host side: masquerade only traffic arriving from this veth.
   nft -f - <<EOF
 table ip $NFT_TABLE {
+  counter arrived {}
+  counter forwarded {}
+  chain prerouting {
+    type filter hook prerouting priority raw; policy accept;
+    iifname "$VETH_HOST" counter name arrived
+  }
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
-    iifname "$VETH_HOST" masquerade
+    iifname "$VETH_HOST" counter name forwarded masquerade
   }
 }
 EOF
   NFT_CREATED=1
+  check_host_forwarding
+}
+
+# Print the packet count of a named counter in this run's host table.
+nft_counter_packets() {
+  nft list counter ip "$NFT_TABLE" "$1" 2>/dev/null | awk '/packets/ {print $2; exit}'
+}
+
+# Host firewalls with a "policy drop" forward chain (Docker, ufw) silently drop
+# the veth traffic, so voice never connects. Send one probe packet and compare
+# the counters. This script never edits your firewall: it only tells you which
+# rule to add.
+check_host_forwarding() {
+  local arrived forwarded
+  # 198.51.100.0/24 is reserved for documentation: nothing answers there.
+  ip netns exec "$NS_NAME" bash -c 'echo > /dev/udp/198.51.100.1/3478' 2>/dev/null || true
+  sleep 0.5
+  arrived="$(nft_counter_packets arrived)"
+  forwarded="$(nft_counter_packets forwarded)"
+  if [[ "${arrived:-0}" -gt 0 && "${forwarded:-0}" -eq 0 ]]; then
+    warn "Your host firewall drops forwarded packets, so direct voice cannot connect."
+    warn "Allow the veth in your forward chain (see docs/details.md, 'Firewall drops split voice'). Voice still works through the tunnel without --split-voice."
+  fi
 }
 
 # WireGuard only handshakes when traffic is sent. Send one UDP packet to the
@@ -622,7 +674,7 @@ main() {
 
   if ((cleanup_only)); then
     ((elevated)) || elevate
-    cleanup_leftovers
+    cleanup_leftovers all
     exit 0
   fi
 

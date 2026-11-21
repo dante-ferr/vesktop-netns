@@ -45,6 +45,17 @@ To check the tunnel first, run `make test`. It prints the public IP address the 
 
 You can also run `./vesktop-bypass.sh --help` directly.
 
+## Update
+
+Pull the latest version and reinstall. The launcher entries run an installed copy of the script, so you must reinstall to update them. Your saved config stays.
+
+```bash
+git pull
+make install
+```
+
+Restart Vesktop through the launcher afterward.
+
 ## Problems
 
 | Problem | Fix |
@@ -53,7 +64,7 @@ You can also run `./vesktop-bypass.sh --help` directly.
 | `Vesktop is already running outside the tunnel` | Quit Vesktop fully, including the tray icon, then run again. |
 | No handshake or no internet | The config is expired or UDP is blocked. Download a config for another server. |
 | Calls lag | Try `make split`. See [Lower call latency](docs/details.md#lower-call-latency-with---split-voice). |
-| Leftover namespaces after a crash | Run `./vesktop-bypass.sh --cleanup`. |
+| Leftover namespaces after a crash | The next run removes them. Or run `./vesktop-bypass.sh --cleanup`. |
 
 More solutions: [docs/details.md](docs/details.md#troubleshooting).
 
