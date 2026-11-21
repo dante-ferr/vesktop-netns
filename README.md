@@ -104,6 +104,7 @@ The IP address must differ from your normal one. Compare it with the output of `
 vesktop-bypass.sh [options] [WG_CONF] [-- VESKTOP_ARGS...]
 
   -t, --test      Print the tunnel's public IP and exit.
+  -s, --split-voice  Send voice/video UDP directly (lower call latency).
   -c, --cleanup   Remove leftover namespaces after a crash.
   -h, --help      Show help.
 ```
@@ -120,11 +121,30 @@ Pass extra Vesktop flags after `--`:
 ./vesktop-bypass.sh -- --ozone-platform=x11
 ```
 
-Optional: install a shortcut.
+## Make targets
 
-```sh
-sudo install -m 755 vesktop-bypass.sh /usr/local/bin/vesktop-bypass
-```
+| Command | Action |
+| --- | --- |
+| `make deps` | Install dependencies for your distro. |
+| `make run` | Run Vesktop through the tunnel. Pass options with `ARGS="..."`. |
+| `make split` | Run with direct voice/video UDP (`--split-voice`). |
+| `make test` | Print the public IP seen through the tunnel. |
+| `make install` | Add **Vesktop Netns** to your app launcher and install `vesktop-bypass` to `~/.local/bin`. |
+| `make uninstall` | Remove both. |
+
+The launcher entry opens a terminal because `sudo` asks for your password.
+
+## Lower call latency with `--split-voice`
+
+By default, voice goes through the VPN, which adds delay. With `--split-voice` (or `make split`), the script sends only voice and video UDP traffic (ports `3478-3481` and `50000-65535`) over your normal connection. Login, chat, DNS, and all TCP traffic still use the tunnel.
+
+Trade-offs:
+
+- Discord voice servers see your real IP address.
+- The script adds a temporary `nft` NAT rule on the host, limited to the namespace's veth interface. It removes the rule on exit.
+- Firewalls that block forwarding (for example Docker's default `FORWARD` policy) can stop voice. Voice then fails to connect.
+- Discord picks the voice region from the IP it sees on login. Set the channel's **Region Override** to a server near you.
+- Change the ports with `VESKTOP_DIRECT_UDP_PORTS`.
 
 ## How it works
 

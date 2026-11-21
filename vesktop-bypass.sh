@@ -34,6 +34,14 @@ NS_CREATED=0
 WG_CREATED=0
 RESOLV_DIR=""
 
+# Split mode (--split-voice): voice UDP leaves through a veth pair + host NAT.
+SPLIT_VOICE=0
+VETH_HOST="vbh$$"
+VETH_NS="vbn$$"
+NFT_TABLE="vesktop_netns_$$"
+NFT_CREATED=0
+DIRECT_UDP_PORTS="${VESKTOP_DIRECT_UDP_PORTS:-3478-3481,50000-65535}"
+
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
@@ -59,6 +67,11 @@ Arguments:
 Options:
   -t, --test      Do not start Vesktop. Print the public IP seen through the
                   tunnel, then clean up. Use it to check your .conf file.
+  -s, --split-voice
+                  Send voice/video UDP traffic directly over your normal
+                  connection (lower call latency). DNS and all TCP still use
+                  the tunnel. Discord voice servers then see your real IP.
+                  Needs nft. Adds a temporary NAT rule on the host.
   -c, --cleanup   Remove leftover namespaces from crashed runs, then exit.
   -h, --help      Show this help.
 
@@ -67,6 +80,9 @@ Environment:
   VESKTOP_CMD       Command used to start Vesktop (default: auto-detect
                     "vesktop", then the Flatpak "dev.vencord.Vesktop").
   VESKTOP_DNS       Comma-separated DNS servers; overrides the config's DNS.
+  VESKTOP_DIRECT_UDP_PORTS
+                    UDP ports sent directly with --split-voice
+                    (default: 3478-3481,50000-65535).
 
 Anything after "--" is passed to Vesktop unchanged.
 EOF
@@ -81,7 +97,9 @@ priv() { sudo -- "$@"; }
 
 require_commands() {
   local missing=() cmd
-  for cmd in ip wg wg-quick sudo setpriv; do
+  local -a required=(ip wg wg-quick sudo setpriv)
+  ((SPLIT_VOICE)) && required+=(nft sysctl)
+  for cmd in "${required[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if ((${#missing[@]})); then
@@ -109,6 +127,9 @@ cleanup() {
   fi
   # If the interface was never moved into the namespace, remove it from the host.
   ((WG_CREATED)) && priv ip link del "$WG_IF" 2>/dev/null
+  # Split mode: deleting the host veth end also removes its peer.
+  ((SPLIT_VOICE)) && priv ip link del "$VETH_HOST" 2>/dev/null
+  ((NFT_CREATED)) && priv nft delete table ip "$NFT_TABLE" 2>/dev/null
   [[ -n "$RESOLV_DIR" ]] && priv rm -rf -- "$RESOLV_DIR" 2>/dev/null
   [[ -n "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
 
@@ -269,7 +290,66 @@ setup_namespace() {
   priv chmod 644 -- "$RESOLV_DIR/resolv.conf"
 
   wait_for_handshake "${dns[0]}"
+  ((SPLIT_VOICE)) && setup_split_voice
   log "Tunnel ready (DNS: ${dns[*]})."
+}
+
+# Optional: let voice/video UDP bypass the tunnel for lower latency.
+#
+# A veth pair links the namespace to the host. Inside the namespace, UDP
+# packets to DIRECT_UDP_PORTS get a firewall mark; a policy rule sends marked
+# packets over the veth instead of WireGuard. The host masquerades them. The
+# NAT table is scoped to the veth and removed on exit. Everything else
+# (TCP, DNS, other UDP) still uses the tunnel.
+setup_split_voice() {
+  [[ "$DIRECT_UDP_PORTS" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] \
+    || die "Invalid VESKTOP_DIRECT_UDP_PORTS: $DIRECT_UDP_PORTS"
+
+  # Derive a /30 from the PID to limit collisions between parallel runs.
+  local octet=$(($$ % 250 + 1))
+  local host_ip="10.213.$octet.1" ns_ip="10.213.$octet.2"
+
+  log "Enabling direct voice/video UDP (ports $DIRECT_UDP_PORTS)"
+
+  priv ip link add "$VETH_HOST" type veth peer name "$VETH_NS"
+  priv ip link set "$VETH_NS" netns "$NS_NAME"
+  priv ip addr add "$host_ip/30" dev "$VETH_HOST"
+  priv ip link set "$VETH_HOST" up
+  # Per-interface forwarding only: the host's global setting stays unchanged.
+  priv sysctl -qw "net.ipv4.conf.$VETH_HOST.forwarding=1"
+
+  priv ip -n "$NS_NAME" addr add "$ns_ip/30" dev "$VETH_NS"
+  priv ip -n "$NS_NAME" link set "$VETH_NS" up
+  priv ip netns exec "$NS_NAME" sysctl -qw \
+    net.ipv4.conf.all.rp_filter=0 "net.ipv4.conf.$VETH_NS.rp_filter=0"
+  priv ip -n "$NS_NAME" route add default via "$host_ip" dev "$VETH_NS" table 100
+  priv ip -n "$NS_NAME" rule add fwmark 0x1 table 100
+
+  # Namespace side: mark the voice UDP packets and rewrite their source
+  # address to the veth address (it was chosen while routing via WireGuard).
+  priv ip netns exec "$NS_NAME" nft -f - <<EOF
+table ip vesktop_split {
+  chain output {
+    type route hook output priority mangle; policy accept;
+    udp dport { $DIRECT_UDP_PORTS } meta mark set 0x1
+  }
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    oifname "$VETH_NS" snat to $ns_ip
+  }
+}
+EOF
+
+  # Host side: masquerade only traffic arriving from this veth.
+  priv nft -f - <<EOF
+table ip $NFT_TABLE {
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    iifname "$VETH_HOST" masquerade
+  }
+}
+EOF
+  NFT_CREATED=1
 }
 
 # WireGuard only handshakes when traffic is sent. Send one UDP packet to the
@@ -355,6 +435,7 @@ main() {
     case "$1" in
       -h|--help)    usage; exit 0 ;;
       -t|--test)    test_only=1 ;;
+      -s|--split-voice) SPLIT_VOICE=1 ;;
       -c|--cleanup) require_commands; sudo -v; cleanup_leftovers; exit 0 ;;
       --)           shift; vesktop_args=("$@"); break ;;
       -*)           die "Unknown option: $1 (try --help)" ;;
