@@ -31,7 +31,7 @@ Follow these steps:
 1. Download the file and install it:
 
    ```sh
-   make install CONF=~/Downloads/your-file.conf
+   make install CONF=~/Downloads/vesktop.conf
    ```
 
 1. Measure the latency to the server:

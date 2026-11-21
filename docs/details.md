@@ -21,17 +21,25 @@ Pick one option.
 1. Create an account at [protonvpn.com](https://protonvpn.com).
 2. Open **Downloads** > **WireGuard configuration**.
 3. Select **GNU/Linux**, choose a free server, and click **Create**.
-4. Download the `.conf` file.
+4. Download the `.conf` file and save it as `~/Downloads/vesktop.conf`. Rename it if your browser used a different name.
 
 **Cloudflare WARP (free) with `wgcf`**
 
 1. Install [`wgcf`](https://github.com/ViRb3/wgcf) (`pacman -S wgcf` on Arch, or download a release).
 2. Run `wgcf register`, then `wgcf generate`.
-3. Use the generated `wgcf-profile.conf`.
+3. Copy the generated `wgcf-profile.conf` to `~/Downloads/vesktop.conf`.
 
 WARP is not a privacy VPN, but it works as a free bypass for blocked access.
 
 Any provider that exports a standard WireGuard config also works (Mullvad, IVPN, your own server). See [`wg.conf.example`](../wg.conf.example) for the format.
+
+Then install it:
+
+```sh
+make install CONF=~/Downloads/vesktop.conf
+```
+
+Use `~/Downloads/vesktop.conf` for any provider. The name is short, and it keeps the install command the same each time. The file stays in `Downloads` after the install, so delete it when you finish. `make install` saves its own copy to `~/.config/vesktop-netns/wg.conf`.
 
 Never commit a real config. `.gitignore` blocks every `*.conf` file except `wg.conf.example`.
 
@@ -58,7 +66,7 @@ Without a path argument, the script uses the first file that exists:
 2. `~/.config/vesktop-netns/wg.conf` (the file `make install` creates)
 3. `wg.conf` next to the script
 
-To switch configs, run `make install CONF=other.conf` again, or pass a path: `./vesktop-bypass.sh other.conf`.
+To switch configs, run `make install CONF=~/Downloads/vesktop.conf` again with the new file, or pass a path: `./vesktop-bypass.sh other.conf`.
 
 ## Options and variables
 
@@ -136,7 +144,7 @@ In split mode, a veth pair links the namespace to the host. Inside the namespace
 | `No password entered` | You cancelled the dialog, or it could not open. Check that `zenity` or `kdialog` opens from your desktop session: `zenity --password`. |
 | Launcher entry does nothing | Check `~/.local/state/vesktop-netns/last.log`. The entry needs `zenity` or `kdialog` for the password dialog. |
 | Flatpak Vesktop fails to start | Check `flatpak run dev.vencord.Vesktop` outside the script, or set `VESKTOP_CMD` to a native install. |
-| `make install` says no config found | Run `make install CONF=path/to/your-file.conf`. |
+| `make install` says no config found | Run `make install CONF=~/Downloads/vesktop.conf`. |
 
 ## Limitations
 

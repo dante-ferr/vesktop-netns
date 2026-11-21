@@ -12,7 +12,7 @@ Run [Vesktop](https://github.com/Vencord/Vesktop) through a WireGuard VPN. Only 
    git clone https://github.com/dante-ferr/vesktop-netns.git
    cd vesktop-netns
    make deps
-   make install CONF=~/Downloads/your-file.conf
+   make install CONF=~/Downloads/vesktop.conf
    ```
 
    - `make deps` installs the required packages for your distro.
