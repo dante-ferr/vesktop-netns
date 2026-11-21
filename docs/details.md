@@ -113,7 +113,7 @@ In split mode, a veth pair links the namespace to the host. Inside the namespace
 ## Security notes
 
 - Vesktop never runs as root. `sudo` is used only for network setup.
-- The private key goes through a pipe to `wg setconf`. The script never writes it to a temporary file.
+- The private key goes to `wg setconf` through stdin. The script never saves it to a file of its own.
 - `make install` stores the config with mode `600` in a `700` directory.
 - The script ignores `PreUp`, `PostUp`, and similar hooks in the config file.
 - The script validates addresses, DNS values, and port lists before it passes them to privileged commands.

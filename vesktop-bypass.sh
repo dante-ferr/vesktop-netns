@@ -108,6 +108,21 @@ EOF
 # Run a command as root. Only network setup uses root; Vesktop never does.
 priv() { "${SUDO[@]}" -- "$@"; }
 
+# Run a command and store its stdout in the variable named by $1.
+# Unlike "$(priv ...)", it does not start sudo from a subshell. Without a
+# terminal, sudo ties its password cache to the parent process, so sudo calls
+# from subshells or pipelines would prompt again. Keep every priv call in the
+# main shell.
+capture() {
+  local __var="$1" __tmp __rc=0
+  shift
+  __tmp="$(mktemp)"
+  "$@" >"$__tmp" 2>/dev/null || __rc=$?
+  printf -v "$__var" '%s' "$(<"$__tmp")"
+  rm -f -- "$__tmp"
+  return "$__rc"
+}
+
 require_commands() {
   local missing=() cmd
   local -a required=(ip wg wg-quick sudo setpriv)
@@ -133,7 +148,7 @@ cleanup() {
   if ((NS_CREATED)); then
     # Stop anything still running in the namespace so it can be removed.
     local pids
-    pids="$(priv ip netns pids "$NS_NAME" 2>/dev/null)"
+    capture pids priv ip netns pids "$NS_NAME"
     # shellcheck disable=SC2086
     [[ -n "$pids" ]] && priv kill $pids 2>/dev/null
     priv ip netns del "$NS_NAME" 2>/dev/null
@@ -159,7 +174,7 @@ cleanup_leftovers() {
     found=1
     log "Removing leftover namespace $ns"
     local pids
-    pids="$(priv ip netns pids "$ns" 2>/dev/null || true)"
+    capture pids priv ip netns pids "$ns" || true
     # shellcheck disable=SC2086
     [[ -n "$pids" ]] && priv kill $pids 2>/dev/null || true
     priv ip netns del "$ns" || true
@@ -277,8 +292,11 @@ setup_namespace() {
   log "Creating WireGuard interface $WG_IF"
   priv ip link add "$WG_IF" type wireguard
   WG_CREATED=1
-  # The private key travels through a pipe, never through a file on disk.
-  wg-quick strip "$WORK_DIR/wgvb.conf" | priv wg setconf "$WG_IF" /dev/stdin
+  # The private key is passed through stdin (a here-string), not a named file.
+  local stripped
+  stripped="$(wg-quick strip "$WORK_DIR/wgvb.conf")"
+  priv wg setconf "$WG_IF" /dev/stdin <<<"$stripped"
+  stripped=""
 
   # Moving the interface keeps its UDP socket in the host namespace, so the
   # encrypted packets can reach the VPN server while apps inside cannot
@@ -300,7 +318,7 @@ setup_namespace() {
   # The script's umask is 077, but the unprivileged user must be able to read
   # these files, so set the modes explicitly.
   priv install -d -m 755 -- "$RESOLV_DIR"
-  printf 'nameserver %s\n' "${dns[@]}" | priv tee "$RESOLV_DIR/resolv.conf" >/dev/null
+  priv tee "$RESOLV_DIR/resolv.conf" >/dev/null < <(printf 'nameserver %s\n' "${dns[@]}")
   priv chmod 644 -- "$RESOLV_DIR/resolv.conf"
 
   wait_for_handshake "${dns[0]}"
@@ -372,7 +390,8 @@ wait_for_handshake() {
   local probe_target="$1" i hs
   priv ip netns exec "$NS_NAME" bash -c "echo > /dev/udp/${probe_target}/53" 2>/dev/null || true
   for ((i = 0; i < 20; i++)); do
-    hs="$(priv ip netns exec "$NS_NAME" wg show "$WG_IF" latest-handshakes | awk '{print $2}' | head -n1)"
+    capture hs priv ip netns exec "$NS_NAME" wg show "$WG_IF" latest-handshakes || true
+    hs="$(awk '{print $2; exit}' <<<"$hs")"
     [[ -n "$hs" && "$hs" != "0" ]] && return 0
     sleep 0.5
   done
