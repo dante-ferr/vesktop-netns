@@ -34,8 +34,9 @@ NS_CREATED=0
 # GUI_MODE=1 when started without a terminal (for example from the app
 # launcher): passwords come from a graphical prompt and output goes to a log.
 GUI_MODE=0
-SUDO=(sudo)
-ASKPASS_FILE=""
+RUN_UID=""   # The invoking (unprivileged) user; set in main.
+RUN_GID=""
+ORIG_ARGS=()
 LOG_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/vesktop-netns/last.log"
 WG_CREATED=0
 RESOLV_DIR=""
@@ -58,7 +59,14 @@ die() {
   printf '[%s] ERROR: %s\n' "$PROG" "$*" >&2
   # Without a terminal (app launcher), also show a desktop notification.
   if ((GUI_MODE)) && command -v notify-send >/dev/null 2>&1; then
-    notify-send -u critical "Vesktop Netns" "$*" 2>/dev/null || true
+    if ((EUID == 0)) && [[ -n "$RUN_UID" ]]; then
+      # Notify as the desktop user: the session bus rejects root.
+      setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
+        env "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}" \
+        notify-send -u critical "Vesktop Netns" "$*" 2>/dev/null || true
+    else
+      notify-send -u critical "Vesktop Netns" "$*" 2>/dev/null || true
+    fi
   fi
   exit 1
 }
@@ -105,27 +113,9 @@ EOF
 # Privileged command helpers
 # ---------------------------------------------------------------------------
 
-# Run a command as root. Only network setup uses root; Vesktop never does.
-priv() { "${SUDO[@]}" -- "$@"; }
-
-# Run a command and store its stdout in the variable named by $1.
-# Unlike "$(priv ...)", it does not start sudo from a subshell. Without a
-# terminal, sudo ties its password cache to the parent process, so sudo calls
-# from subshells or pipelines would prompt again. Keep every priv call in the
-# main shell.
-capture() {
-  local __var="$1" __tmp __rc=0
-  shift
-  __tmp="$(mktemp)"
-  "$@" >"$__tmp" 2>/dev/null || __rc=$?
-  printf -v "$__var" '%s' "$(<"$__tmp")"
-  rm -f -- "$__tmp"
-  return "$__rc"
-}
-
 require_commands() {
   local missing=() cmd
-  local -a required=(ip wg wg-quick sudo setpriv)
+  local -a required=(ip wg wg-quick sudo setpriv realpath)
   ((SPLIT_VOICE)) && required+=(nft sysctl)
   for cmd in "${required[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
@@ -148,19 +138,18 @@ cleanup() {
   if ((NS_CREATED)); then
     # Stop anything still running in the namespace so it can be removed.
     local pids
-    capture pids priv ip netns pids "$NS_NAME"
+    pids="$(ip netns pids "$NS_NAME" 2>/dev/null)"
     # shellcheck disable=SC2086
-    [[ -n "$pids" ]] && priv kill $pids 2>/dev/null
-    priv ip netns del "$NS_NAME" 2>/dev/null
+    [[ -n "$pids" ]] && kill $pids 2>/dev/null
+    ip netns del "$NS_NAME" 2>/dev/null
   fi
   # If the interface was never moved into the namespace, remove it from the host.
-  ((WG_CREATED)) && priv ip link del "$WG_IF" 2>/dev/null
+  ((WG_CREATED)) && ip link del "$WG_IF" 2>/dev/null
   # Split mode: deleting the host veth end also removes its peer.
-  ((SPLIT_VOICE)) && priv ip link del "$VETH_HOST" 2>/dev/null
-  ((NFT_CREATED)) && priv nft delete table ip "$NFT_TABLE" 2>/dev/null
-  [[ -n "$RESOLV_DIR" ]] && priv rm -rf -- "$RESOLV_DIR" 2>/dev/null
+  ((SPLIT_VOICE)) && ip link del "$VETH_HOST" 2>/dev/null
+  ((NFT_CREATED)) && nft delete table ip "$NFT_TABLE" 2>/dev/null
+  [[ -n "$RESOLV_DIR" ]] && rm -rf -- "$RESOLV_DIR" 2>/dev/null
   [[ -n "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
-  [[ -n "$ASKPASS_FILE" ]] && rm -f -- "$ASKPASS_FILE"
 
   ((NS_CREATED)) && log "Cleaned up namespace $NS_NAME."
   exit "$rc"
@@ -174,11 +163,11 @@ cleanup_leftovers() {
     found=1
     log "Removing leftover namespace $ns"
     local pids
-    capture pids priv ip netns pids "$ns" || true
+    pids="$(ip netns pids "$ns" 2>/dev/null || true)"
     # shellcheck disable=SC2086
-    [[ -n "$pids" ]] && priv kill $pids 2>/dev/null || true
-    priv ip netns del "$ns" || true
-    priv rm -rf -- "/etc/netns/$ns" || true
+    [[ -n "$pids" ]] && kill $pids 2>/dev/null || true
+    ip netns del "$ns" || true
+    rm -rf -- "/etc/netns/$ns" || true
   done < <(ip netns list 2>/dev/null)
   ((found)) || log "No leftover namespaces found."
 }
@@ -278,48 +267,48 @@ setup_namespace() {
   ln -s "$(realpath -- "$conf")" "$WORK_DIR/wgvb.conf"
 
   # Load the kernel module if needed and fail early with a clear message.
-  priv modprobe wireguard 2>/dev/null || true
-  if ! priv ip link add "wgchk$$" type wireguard 2>/dev/null; then
+  modprobe wireguard 2>/dev/null || true
+  if ! ip link add "wgchk$$" type wireguard 2>/dev/null; then
     die "The kernel cannot create WireGuard interfaces. If you updated the kernel, reboot. Otherwise install a WireGuard-capable kernel (5.6+)."
   fi
-  priv ip link del "wgchk$$" 2>/dev/null || true
+  ip link del "wgchk$$" 2>/dev/null || true
 
   log "Creating namespace $NS_NAME"
-  priv ip netns add "$NS_NAME"
+  ip netns add "$NS_NAME"
   NS_CREATED=1
-  priv ip -n "$NS_NAME" link set lo up
+  ip -n "$NS_NAME" link set lo up
 
   log "Creating WireGuard interface $WG_IF"
-  priv ip link add "$WG_IF" type wireguard
+  ip link add "$WG_IF" type wireguard
   WG_CREATED=1
   # The private key is passed through stdin (a here-string), not a named file.
   local stripped
   stripped="$(wg-quick strip "$WORK_DIR/wgvb.conf")"
-  priv wg setconf "$WG_IF" /dev/stdin <<<"$stripped"
+  wg setconf "$WG_IF" /dev/stdin <<<"$stripped"
   stripped=""
 
   # Moving the interface keeps its UDP socket in the host namespace, so the
   # encrypted packets can reach the VPN server while apps inside cannot
   # reach anything else.
-  priv ip link set "$WG_IF" netns "$NS_NAME"
+  ip link set "$WG_IF" netns "$NS_NAME"
   WG_CREATED=0
 
   for addr in "${addresses[@]}"; do
-    priv ip -n "$NS_NAME" addr add "$addr" dev "$WG_IF"
+    ip -n "$NS_NAME" addr add "$addr" dev "$WG_IF"
   done
-  priv ip -n "$NS_NAME" link set "$WG_IF" mtu "$mtu" up
-  priv ip -n "$NS_NAME" route add default dev "$WG_IF"
+  ip -n "$NS_NAME" link set "$WG_IF" mtu "$mtu" up
+  ip -n "$NS_NAME" route add default dev "$WG_IF"
   # Without an IPv6 address there is no IPv6 route, so IPv6 cannot leak.
-  ((has_v6)) && priv ip -n "$NS_NAME" -6 route add default dev "$WG_IF"
+  ((has_v6)) && ip -n "$NS_NAME" -6 route add default dev "$WG_IF"
 
   # "ip netns exec" bind-mounts /etc/netns/<name>/resolv.conf over
   # /etc/resolv.conf for processes inside the namespace only.
   RESOLV_DIR="/etc/netns/$NS_NAME"
   # The script's umask is 077, but the unprivileged user must be able to read
   # these files, so set the modes explicitly.
-  priv install -d -m 755 -- "$RESOLV_DIR"
-  priv tee "$RESOLV_DIR/resolv.conf" >/dev/null < <(printf 'nameserver %s\n' "${dns[@]}")
-  priv chmod 644 -- "$RESOLV_DIR/resolv.conf"
+  install -d -m 755 -- "$RESOLV_DIR"
+  printf 'nameserver %s\n' "${dns[@]}" >"$RESOLV_DIR/resolv.conf"
+  chmod 644 -- "$RESOLV_DIR/resolv.conf"
 
   wait_for_handshake "${dns[0]}"
   ((SPLIT_VOICE)) && setup_split_voice
@@ -343,23 +332,23 @@ setup_split_voice() {
 
   log "Enabling direct voice/video UDP (ports $DIRECT_UDP_PORTS)"
 
-  priv ip link add "$VETH_HOST" type veth peer name "$VETH_NS"
-  priv ip link set "$VETH_NS" netns "$NS_NAME"
-  priv ip addr add "$host_ip/30" dev "$VETH_HOST"
-  priv ip link set "$VETH_HOST" up
+  ip link add "$VETH_HOST" type veth peer name "$VETH_NS"
+  ip link set "$VETH_NS" netns "$NS_NAME"
+  ip addr add "$host_ip/30" dev "$VETH_HOST"
+  ip link set "$VETH_HOST" up
   # Per-interface forwarding only: the host's global setting stays unchanged.
-  priv sysctl -qw "net.ipv4.conf.$VETH_HOST.forwarding=1"
+  sysctl -qw "net.ipv4.conf.$VETH_HOST.forwarding=1"
 
-  priv ip -n "$NS_NAME" addr add "$ns_ip/30" dev "$VETH_NS"
-  priv ip -n "$NS_NAME" link set "$VETH_NS" up
-  priv ip netns exec "$NS_NAME" sysctl -qw \
+  ip -n "$NS_NAME" addr add "$ns_ip/30" dev "$VETH_NS"
+  ip -n "$NS_NAME" link set "$VETH_NS" up
+  ip netns exec "$NS_NAME" sysctl -qw \
     net.ipv4.conf.all.rp_filter=0 "net.ipv4.conf.$VETH_NS.rp_filter=0"
-  priv ip -n "$NS_NAME" route add default via "$host_ip" dev "$VETH_NS" table 100
-  priv ip -n "$NS_NAME" rule add fwmark 0x1 table 100
+  ip -n "$NS_NAME" route add default via "$host_ip" dev "$VETH_NS" table 100
+  ip -n "$NS_NAME" rule add fwmark 0x1 table 100
 
   # Namespace side: mark the voice UDP packets and rewrite their source
   # address to the veth address (it was chosen while routing via WireGuard).
-  priv ip netns exec "$NS_NAME" nft -f - <<EOF
+  ip netns exec "$NS_NAME" nft -f - <<EOF
 table ip vesktop_split {
   chain output {
     type route hook output priority mangle; policy accept;
@@ -373,7 +362,7 @@ table ip vesktop_split {
 EOF
 
   # Host side: masquerade only traffic arriving from this veth.
-  priv nft -f - <<EOF
+  nft -f - <<EOF
 table ip $NFT_TABLE {
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
@@ -388,10 +377,9 @@ EOF
 # DNS server, then wait up to 10 seconds for the handshake to complete.
 wait_for_handshake() {
   local probe_target="$1" i hs
-  priv ip netns exec "$NS_NAME" bash -c "echo > /dev/udp/${probe_target}/53" 2>/dev/null || true
+  ip netns exec "$NS_NAME" bash -c "echo > /dev/udp/${probe_target}/53" 2>/dev/null || true
   for ((i = 0; i < 20; i++)); do
-    capture hs priv ip netns exec "$NS_NAME" wg show "$WG_IF" latest-handshakes || true
-    hs="$(awk '{print $2; exit}' <<<"$hs")"
+    hs="$(ip netns exec "$NS_NAME" wg show "$WG_IF" latest-handshakes | awk '{print $2; exit}')"
     [[ -n "$hs" && "$hs" != "0" ]] && return 0
     sleep 0.5
   done
@@ -422,10 +410,10 @@ run_in_namespace() {
     [[ -n "${!var:-}" ]] && env_args+=("$var=${!var}")
   done
   # Default so PipeWire/PulseAudio sockets in the runtime dir are found.
-  [[ -n "${XDG_RUNTIME_DIR:-}" ]] || env_args+=("XDG_RUNTIME_DIR=/run/user/$(id -u)")
+  [[ -n "${XDG_RUNTIME_DIR:-}" ]] || env_args+=("XDG_RUNTIME_DIR=/run/user/$RUN_UID")
 
-  priv ip netns exec "$NS_NAME" \
-    setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+  ip netns exec "$NS_NAME" \
+    setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
     env -i "${env_args[@]}" "$@"
 }
 
@@ -467,38 +455,62 @@ setup_gui_mode() {
   GUI_MODE=1
   mkdir -p -- "$(dirname -- "$LOG_FILE")"
   exec >"$LOG_FILE" 2>&1
+}
 
-  if [[ -z "${SUDO_ASKPASS:-}" ]]; then
-    local body=""
-    if command -v zenity >/dev/null 2>&1; then
-      body='exec zenity --password --title="Vesktop Netns: administrator password"'
-    elif command -v kdialog >/dev/null 2>&1; then
-      body='exec kdialog --password "Vesktop Netns needs your password to set up the network."'
-    else
-      local helper
-      for helper in ksshaskpass lxqt-openssh-askpass ssh-askpass /usr/lib/ssh/x11-ssh-askpass; do
-        if command -v "$helper" >/dev/null 2>&1; then body="exec $helper \"\$@\""; break; fi
-      done
-    fi
-    [[ -n "$body" ]] || die "No graphical password prompt found. Install zenity or kdialog, or run from a terminal."
-    ASKPASS_FILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/vesktop-askpass.XXXXXX")"
-    printf '#!/bin/sh\n%s\n' "$body" >"$ASKPASS_FILE"
-    chmod 700 "$ASKPASS_FILE"
-    export SUDO_ASKPASS="$ASKPASS_FILE"
+# Create a script that shows a graphical password dialog; prints its path.
+make_askpass() {
+  local body="" helper file
+  if command -v zenity >/dev/null 2>&1; then
+    body='exec zenity --password --title="Vesktop Netns: administrator password"'
+  elif command -v kdialog >/dev/null 2>&1; then
+    body='exec kdialog --password "Vesktop Netns needs your password to set up the network."'
+  else
+    for helper in ksshaskpass lxqt-openssh-askpass ssh-askpass /usr/lib/ssh/x11-ssh-askpass; do
+      if command -v "$helper" >/dev/null 2>&1; then body="exec $helper \"\$@\""; break; fi
+    done
   fi
-  SUDO=(sudo -A)
+  [[ -n "$body" ]] || die "No graphical password prompt found. Install zenity or kdialog, or run from a terminal."
+  file="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/vesktop-askpass.XXXXXX")"
+  printf '#!/bin/sh\n%s\n' "$body" >"$file"
+  chmod 700 "$file"
+  printf '%s\n' "$file"
+}
+
+# Re-run this script once as root so the user enters the password a single
+# time. Display and audio variables are passed explicitly because sudo clears
+# the environment. The root copy drops privileges for Vesktop with setpriv.
+elevate() {
+  local -a sudo_cmd=(sudo) fwd=(VN_ELEVATED=1 "VN_GUI=$GUI_MODE")
+  local var askpass="" rc=0 own_askpass=0
+  for var in "${FORWARD_VARS[@]}"; do
+    [[ -n "${!var:-}" ]] && fwd+=("$var=${!var}")
+  done
+  if ((GUI_MODE)); then
+    askpass="${SUDO_ASKPASS:-}"
+    if [[ -z "$askpass" ]]; then
+      askpass="$(make_askpass)"
+      own_askpass=1
+    fi
+    sudo_cmd=(sudo -A)
+  fi
+  log "Requesting administrator access for network setup..."
+  SUDO_ASKPASS="$askpass" "${sudo_cmd[@]}" -- env "${fwd[@]}" \
+    "$(realpath -- "${BASH_SOURCE[0]}")" "${ORIG_ARGS[@]}" || rc=$?
+  ((GUI_MODE && own_askpass)) && rm -f -- "$askpass"
+  exit "$rc"
 }
 
 main() {
-  local conf_arg="" test_only=0
+  local conf_arg="" test_only=0 cleanup_only=0
   local -a vesktop_args=()
+  ORIG_ARGS=("$@")
 
   while (($#)); do
     case "$1" in
       -h|--help)    usage; exit 0 ;;
       -t|--test)    test_only=1 ;;
       -s|--split-voice) SPLIT_VOICE=1 ;;
-      -c|--cleanup) require_commands; "${SUDO[@]}" -v; cleanup_leftovers; exit 0 ;;
+      -c|--cleanup) cleanup_only=1 ;;
       --)           shift; vesktop_args=("$@"); break ;;
       -*)           die "Unknown option: $1 (try --help)" ;;
       *)            [[ -z "$conf_arg" ]] || die "Only one config file is accepted."
@@ -507,10 +519,29 @@ main() {
     shift
   done
 
-  setup_gui_mode
-  ((EUID != 0)) || die "Run as your normal user, not root. The script uses sudo only for network setup."
   [[ "$(uname -s)" == "Linux" ]] || die "Linux only."
+
+  # Two phases: the first runs as your user, validates everything, and starts
+  # sudo once. The second (VN_ELEVATED=1) runs as root.
+  local elevated=0
+  if [[ "${VN_ELEVATED:-}" == "1" && $EUID -eq 0 && -n "${SUDO_UID:-}" ]]; then
+    elevated=1
+    GUI_MODE="${VN_GUI:-0}"
+    RUN_UID="$SUDO_UID"
+    RUN_GID="${SUDO_GID:-$SUDO_UID}"
+  else
+    ((EUID != 0)) || die "Run as your normal user, not root. The script asks for sudo itself."
+    setup_gui_mode
+    RUN_UID="$(id -u)"
+    RUN_GID="$(id -g)"
+  fi
   require_commands
+
+  if ((cleanup_only)); then
+    ((elevated)) || elevate
+    cleanup_leftovers
+    exit 0
+  fi
 
   local conf
   conf="$(resolve_conf_path "$conf_arg")"
@@ -530,9 +561,9 @@ main() {
     cmd+=("${vesktop_args[@]}")
   fi
 
-  log "Requesting administrator access for network setup..."
+  ((elevated)) || elevate
+
   trap cleanup EXIT INT TERM HUP ERR
-  "${SUDO[@]}" -v
   setup_namespace "$conf"
 
   if ((test_only)); then

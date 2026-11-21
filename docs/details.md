@@ -112,7 +112,8 @@ In split mode, a veth pair links the namespace to the host. Inside the namespace
 
 ## Security notes
 
-- Vesktop never runs as root. `sudo` is used only for network setup.
+- The script asks for your password once and re-runs itself as root for the network setup. It then starts Vesktop with `setpriv` as your normal user, so Vesktop never runs as root.
+- Because root runs the script file, keep it writable only by you. Anyone who can edit `~/.local/bin/vesktop-bypass` can run code as root the next time you enter your password. For shared machines, install it system-wide: `sudo install -m 755 vesktop-bypass.sh /usr/local/bin/vesktop-bypass`.
 - The private key goes to `wg setconf` through stdin. The script never saves it to a file of its own.
 - `make install` stores the config with mode `600` in a `700` directory.
 - The script ignores `PreUp`, `PostUp`, and similar hooks in the config file.
