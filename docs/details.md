@@ -113,6 +113,7 @@ In split mode, a veth pair links the namespace to the host. Inside the namespace
 ## Security notes
 
 - The script asks for your password once and re-runs itself as root for the network setup. It then starts Vesktop with `setpriv` as your normal user, so Vesktop never runs as root.
+- From the app launcher, the password dialog appears once per launch. A wrong password or a cancelled dialog ends the run with a desktop notification. The dialog does not reappear, so a mistyped password counts as one failed attempt, not three. The dialog helper is a temporary script in `$XDG_RUNTIME_DIR` that passes the password straight to `sudo` and never stores it.
 - Because root runs the script file, keep it writable only by you. Anyone who can edit `~/.local/bin/vesktop-bypass` can run code as root the next time you enter your password. For shared machines, install it system-wide: `sudo install -m 755 vesktop-bypass.sh /usr/local/bin/vesktop-bypass`.
 - The private key goes to `wg setconf` through stdin. The script never saves it to a file of its own.
 - `make install` stores the config with mode `600` in a `700` directory.
@@ -131,6 +132,8 @@ In split mode, a veth pair links the namespace to the host. Inside the namespace
 | Connection stalls on large transfers | Add `MTU = 1280` to `[Interface]` in your config. |
 | Leftover namespaces after a crash | Run `./vesktop-bypass.sh --cleanup`. |
 | No window or audio | Run from your graphical session as your normal user, not from SSH or another login. |
+| `Wrong password` even though the password is correct | Many distributions, including Arch, lock `sudo` with `pam_faillock` after 3 failed attempts in 15 minutes. While locked, the correct password also fails with `Sorry, try again`. Run `faillock --user "$USER"` to see recent failures. Wait 10 minutes, or reset the counter with `sudo faillock --user "$USER" --reset` from a terminal (or as root if `sudo` is locked). |
+| `No password entered` | You cancelled the dialog, or it could not open. Check that `zenity` or `kdialog` opens from your desktop session: `zenity --password`. |
 | Launcher entry does nothing | Check `~/.local/state/vesktop-netns/last.log`. The entry needs `zenity` or `kdialog` for the password dialog. |
 | Flatpak Vesktop fails to start | Check `flatpak run dev.vencord.Vesktop` outside the script, or set `VESKTOP_CMD` to a native install. |
 | `make install` says no config found | Run `make install CONF=path/to/your-file.conf`. |
